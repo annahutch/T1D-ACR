@@ -1,0 +1,1075 @@
+---
+title: "Data preparation"
+author: "Anna Hutchinson"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(XLConnect)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+source("fig_source.R")
+```
+
+---
+
+This document implements and describes the steps in the preparation of the raw phenotype data.
+
+---
+
+### 1. AdDIT
+
+The AdDIT data comes in two sets: screening visit data and follow-up data (and a third auxiliary data set of values such as age of T1D onset).
+
+```{r echo = FALSE, message = FALSE}
+# read in data
+wb <- loadWorkbook("XX.xlsx")
+screeningvisit <- readWorksheet(wb, "ACR screening visits AdDIT")
+followupvisit <- readWorksheet(wb, "ACR follow up visits AdDIT")
+othervisit <- readWorksheet(wb, "othe visits data")
+rm(wb) # clear up
+
+# read in auxiliary data on BMI and BP
+wb <- loadWorkbook("XX.xlsx")
+AdDITotherdata <- readWorksheet(wb, "AdDIT")
+NFSORPSotherdata <- readWorksheet(wb, "other cohorts")
+rm(wb) # clear up
+```
+
+---
+
+##### Screening visit data
+
+* Upon recruitment to the AdDIT study, individuals had two screening visits (the aim was to have these within 1 month of each other but realistically the time between them is much larger).
+
+* Treat these screening visits as separate visits, since the time between them is rather large.
+
+```{r echo = FALSE, message = FALSE}
+durationbetweenvisitssummary <- screeningvisit %>% group_by(StudyID) %>% summarise(diff = -diff(age.at.visit))
+
+# some spurious values which I exclude later
+hist(durationbetweenvisitssummary$diff, main = "Time between 1st and 2nd screening visit", xlab = "Year")
+```
+
+----
+
+* Note that no BMI or blood pressure measurements were taken at the screening visit (will impute these later).
+
+```{r echo = FALSE, eval = FALSE, message = FALSE, warning =  FALSE}
+# No BMI or blood pressure measurements were taken at the screening visit, so I use the closest measurement taken within 6 months of the visit if available. Note that the missingness is still very high (92% missing).
+
+screeningvisit$BMI <- apply(screeningvisit, 1, function(x){
+  
+  newdf <- AdDITotherdata[which(AdDITotherdata$StudyID==x[["StudyID"]]),]
+  
+  test <- newdf$BMI[match(as.Date(x[["Start.date"]]),as.Date(newdf$visitdate))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate)))<180){
+          
+          out <- newdf[which(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate))<180),]
+          out_ordered <- out[order(abs(as.Date(x[["Start.date"]])-as.Date(out$visitdate))),]
+          
+          if(length(which(!is.na(out_ordered$BMI)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$BMI[min(which(!is.na(out_ordered$BMI)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+screeningvisit$SBP <- apply(screeningvisit, 1, function(x){
+  
+  newdf <- AdDITotherdata[which(AdDITotherdata$StudyID==x[["StudyID"]]),]
+  
+  test <- newdf$SBP[match(as.Date(x[["Start.date"]]),as.Date(newdf$visitdate))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate)))<180){
+          
+          out <- newdf[which(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate))<180),]
+          out_ordered <- out[order(abs(as.Date(x[["Start.date"]])-as.Date(out$visitdate))),]
+          
+          if(length(which(!is.na(out_ordered$SBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$SBP[min(which(!is.na(out_ordered$SBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+screeningvisit$DBP <- apply(screeningvisit, 1, function(x){
+  
+  newdf <- AdDITotherdata[which(AdDITotherdata$StudyID==x[["StudyID"]]),]
+  
+  test <- newdf$DBP[match(as.Date(x[["Start.date"]]),as.Date(newdf$visitdate))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate)))<180){
+          
+          out <- newdf[which(abs(as.Date(x[["Start.date"]])-as.Date(newdf$visitdate))<180),]
+          out_ordered <- out[order(abs(as.Date(x[["Start.date"]])-as.Date(out$visitdate))),]
+          
+          if(length(which(!is.na(out_ordered$DBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$DBP[min(which(!is.na(out_ordered$DBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+```
+
+* Explore histograms for each variable to try and identify any spurious values which we can potentially back calculate.
+
+```{r echo = FALSE, message = FALSE, warning =  FALSE}
+screeningvisit$BMI <- NA
+screeningvisit$SBP <- NA
+screeningvisit$DBP <- NA
+
+par(mfrow=c(2,2))
+hist(screeningvisit$Start.date, breaks = 50, main = "Date of diagnosis", xlab = "Date of diagnosis")
+hist(screeningvisit$age.at.visit, main = "Age at visit", xlab = "Age at visit")
+hist(screeningvisit$duration.at.visit, main = "Duration at visit", xlab = "Duration of diabetes at visit")
+hist(screeningvisit$HbA1c.at.screening, main = "HbA1c", xlab = "HbA1c (%)")
+#hist(screeningvisit$BMI, main = "BMI", xlab = "BMI")
+#hist(screeningvisit$SBP, main = "SBP", xlab = "SBP")
+#hist(screeningvisit$BMI, main = "DBP", xlab = "DBP")
+
+screeningvisit$age_at_diagnosis = othervisit$age.at.T1D.diagnosis[match(screeningvisit$StudyID, othervisit$StudyID)]
+
+#hist(screeningvisit$ScreeningVisit)
+#table(screeningvisit$Sex)
+```
+
+* This data is mostly complete, except for one study sample with no data which we subsequently remove and 9 missing "age at diagnosis" values which we are able to back calculate.
+
+```{r echo = FALSE}
+#screeningvisit[which(is.na(screeningvisit$StudyID)),]
+#screeningvisit[which(is.na(screeningvisit$Start.date)),]
+#screeningvisit[which(is.na(screeningvisit$age.at.visit)),]
+#screeningvisit[which(is.na(screeningvisit$duration.at.visit)),]
+#screeningvisit[which(is.na(screeningvisit$Sex)),]
+#screeningvisit[which(is.na(screeningvisit$HbA1c.at.screening)),]
+#screeningvisit[which(is.na(screeningvisit$age_at_diagnosis)),]
+
+# empty row at bottom for 20111772R so exclude this
+screeningvisit <- screeningvisit[-which(screeningvisit$StudyID=="20111772R"),]
+
+screeningvisit$age_at_diagnosis[which(is.na(screeningvisit$age_at_diagnosis))] <- screeningvisit$age.at.visit[which(is.na(screeningvisit$age_at_diagnosis))] - screeningvisit$duration.at.visit[which(is.na(screeningvisit$age_at_diagnosis))]
+```
+
+---
+
+* At a given visit, three measurements are taken of the individuals ACR, which are then typically averaged in the literature. Some of these consecutive ACR measurements are highly variable. We use the standard error of the mean to quantify this variability. 
+
+```{r echo = FALSE}
+# no missing consecutive ACR readings for screeningvisit data
+#which(is.na(screeningvisit$ACR1) | is.na(screeningvisit$ACR2) | is.na(screeningvisit$ACR3))
+
+ACR_se <- apply(screeningvisit, 1, function(x) sd(x[c(4:6)])/sqrt(3-length(which(is.na(x[c(4:6)])))))
+par(mfrow=c(1,1))
+hist(ACR_se, main = "Histogram of SE of 3 consecutive ACR\nreadings in AdDIT screening data", breaks = 100)
+```
+
+* We exclude visit data where the standard error of consecutive ACR readings $>30$. For the AdDIT screening cohort, this corresponds to removing data from one visit (shown below). 
+
+```{r echo = FALSE}
+data.frame(screeningvisit[which(ACR_se>30),c("StudyID","ScreeningVisit","ACR1","ACR2","ACR3")], ACR_SE = ACR_se[which(ACR_se>30)])
+screeningvisit <- screeningvisit[-which(ACR_se>30),]
+```
+
+* We then take the average of the consecutive ACR readings and construct a data frame.
+
+```{r echo = FALSE}
+df <- data.frame(StudyID = screeningvisit$StudyID, type = paste0("sv",screeningvisit$ScreeningVisit), sex = screeningvisit$Sex, meanACR = rowMeans(screeningvisit[,c("ACR1","ACR2","ACR3")], na.rm = TRUE), visit_age = screeningvisit$age.at.visit, visit_date = screeningvisit$Start.date, visit_duration = screeningvisit$duration.at.visit, HbA1c = screeningvisit$HbA1c.at.screening, age_at_diagnosis = screeningvisit$age_at_diagnosis, treatment.allocation = othervisit$treatment.allocation[match(screeningvisit$StudyID, othervisit$StudyID)], cohort = rep(NA, times = length(screeningvisit$StudyID)), BMI = screeningvisit$BMI, SBP = screeningvisit$SBP, DBP = screeningvisit$DBP)
+```
+
+(Extra data cleaning not needed here since BMI, SBP and DBP are missing, and HbA1c are the same for the two screening visits).
+
+---
+
+```{r}
+head(df)
+```
+
+---
+
+##### Follow-up data
+
+* In the AdDIT follow-up data, 29 entries have only one consecutive ACR reading taken at a visit, and 100 only have two consecutive ACR reading taken at a visit. We exclude entries with only one ACR measurement but keep those with two.
+
+```{r echo = FALSE}
+# how many entries have 0 consecutive ACR readings? 0
+#which(is.na(followupvisit$ACR1) & is.na(followupvisit$ACR2) & is.na(followupvisit$ACR3))
+
+# how many entries have 1 consecutive ACR readings? 29
+#which(is.na(followupvisit$ACR2) & is.na(followupvisit$ACR3))
+
+# how many entries have 2 consecutive ACR readings? 100
+#which(!is.na(followupvisit$ACR2) & is.na(followupvisit$ACR3))
+
+followupvisit <- followupvisit[-which(is.na(followupvisit$ACR2) & is.na(followupvisit$ACR3)),]
+```
+
+* As before, calculate the standard error for the consecutive ACR measurements and exclude visit data for those with $SE>30$ (corresponding to 8 rows shown below).
+
+```{r echo = FALSE}
+ACR_se <- apply(followupvisit, 1, function(x) sd(x[c(5:7)])/sqrt(3-length(which(is.na(x[c(5:7)])))))
+par(mfrow=c(1,1))
+hist(ACR_se, main = "Histogram of SE of 3 consecutive ACR\nreadings in AdDIT follow-up data", breaks = 100)
+
+data.frame(followupvisit[which(ACR_se>30),c("StudySampleID","ACR1","ACR2","ACR3")], ACR_SE = ACR_se[which(ACR_se>30)])
+followupvisit <- followupvisit[-which(ACR_se>30),]
+```
+
+* I match up BMI, blood pressure and HbA1c measurements for each visit (with 7 days). Missingness is very low (156 missing for BMI, 147 for BP, 165 for HbA1c).
+
+* Construct the final data frame:
+
+```{r echo = FALSE, message = FALSE, warning =  FALSE}
+followupvisit$BMI <- apply(followupvisit, 1, function(x){
+  
+  newdf <- AdDITotherdata[which(AdDITotherdata$StudyID==x[["StudySampleID"]]),]
+  
+  test <- newdf$BMI[match(as.Date(x[["Visit.Date"]]),as.Date(newdf$visitdate))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["Visit.Date"]])-as.Date(out$visitdate))),]
+          
+          if(length(which(!is.na(out_ordered$BMI)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$BMI[min(which(!is.na(out_ordered$BMI)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+followupvisit$SBP <- apply(followupvisit, 1, function(x){
+  
+  newdf <- AdDITotherdata[which(AdDITotherdata$StudyID==x[["StudySampleID"]]),]
+  
+  test <- newdf$SBP[match(as.Date(x[["Visit.Date"]]),as.Date(newdf$visitdate))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["Visit.Date"]])-as.Date(out$visitdate))),]
+          
+          if(length(which(!is.na(out_ordered$SBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$SBP[min(which(!is.na(out_ordered$SBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+followupvisit$DBP <- apply(followupvisit, 1, function(x){
+  
+  newdf <- AdDITotherdata[which(AdDITotherdata$StudyID==x[["StudySampleID"]]),]
+  
+  test <- newdf$DBP[match(as.Date(x[["Visit.Date"]]),as.Date(newdf$visitdate))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["Visit.Date"]])-as.Date(out$visitdate))),]
+          
+          if(length(which(!is.na(out_ordered$DBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$DBP[min(which(!is.na(out_ordered$DBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+#followupvisit[which(is.na(followupvisit$BMI)),]
+#followupvisit[which(is.na(followupvisit$SBP)),]
+#followupvisit[which(is.na(followupvisit$SBP)),]
+
+df2 <-  data.frame(StudyID = followupvisit$StudySampleID, type = paste0("fu",followupvisit$Visit), sex = screeningvisit$Sex[match(followupvisit$StudySampleID, screeningvisit$StudyID)], meanACR  = rowMeans(followupvisit[,c("ACR1","ACR2","ACR3")], na.rm = TRUE), visit_age = followupvisit$age.at.visit, visit_date = followupvisit$Visit.Date, visit_duration = followupvisit$duration.at.visit, HbA1c = rep(NA, times = length(followupvisit$StudySampleID)), age_at_diagnosis = followupvisit$age.at.visit - followupvisit$duration.at.visit, treatment.allocation = othervisit$treatment.allocation[match(followupvisit$StudySampleID, othervisit$StudyID)], cohort = rep(NA, times = length(followupvisit$StudySampleID)), BMI = followupvisit$BMI, SBP = followupvisit$SBP, DBP = followupvisit$DBP)
+
+# make data.frame and use HbA1c reading from the same date
+# if HbA1c is not available for that specific date then use the closest one within 6 months
+df2$HbA1c <- apply(followupvisit, 1, function(x){
+  
+  newdf <- othervisit[which(othervisit$StudyID==x[["StudySampleID"]]),]
+  
+  test <- newdf$HbA1c.at.study.visit[match(as.Date(x[["Visit.Date"]]),as.Date(newdf$visitdate))]
+  
+  # try closest date (within 6 months) with HbA1C measurement
+  if(is.na(test)){
+    if(is.na(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))))){
+      test <- NA} else{
+        if(min(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["Visit.Date"]])-as.Date(newdf$visitdate))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["Visit.Date"]])-as.Date(out$visitdate))),]
+          
+          if(length(which(!is.na(out_ordered$HbA1c.at.study)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$HbA1c.at.study.visit[min(which(!is.na(out_ordered$HbA1c.at.study)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+```
+
+---
+
+* Explore histograms for each variable to try and identify any spurious values which we can then back calculate. All of the values look good.
+
+```{r echo = FALSE, message = FALSE}
+par(mfrow=c(3,3))
+hist(df2$age_at_diagnosis, breaks = 50, main = "Age at diabetes onset", xlab = "Age at diabetes onset")
+hist(df2$visit_age, main = "Age at visit", xlab = "Age at visit")
+hist(df2$visit_duration, main = "Duration at visit", xlab = "Duration of diabetes at visit (years)")
+hist(df2$HbA1c, main = "HbA1c", xlab = "HbA1c (%)")
+hist(df2$BMI, main = "BMI", xlab = "BMI")
+hist(df2$SBP, main = "SBP", xlab = "SBP")
+hist(df2$DBP, main = "DBP", xlab = "DBP")
+
+#table(df2$sex)
+```
+
+---
+
+Do an extra data cleaning step to check for any spurious HbA1c, BMI, SBP, DBP values (based on other values for the same individual). To do this, for each individual we calculate the standard error of measurements and visually examine those with extreme standard error values. Everything looks ok here.
+
+```{r echo = FALSE}
+par(mfrow=c(2,2))
+df2_cleaning <- df2 %>% group_by(StudyID) %>% summarise(HbA1c_SE = sd(HbA1c)/sqrt(n()), BMI_SE = sd(BMI)/sqrt(n()), SBP_SE = sd(SBP)/sqrt(n()), DBP_SE = sd(DBP)/sqrt(n()))
+
+hist(df2_cleaning$HbA1c_SE, main = "SE of HbA1c per individual")
+hist(df2_cleaning$BMI_SE, main = "SE of BMI per individual")
+hist(df2_cleaning$SBP_SE, main = "SE of SBP per individual")
+hist(df2_cleaning$DBP_SE, main = "SE of DBP per individual")
+
+# plot of problematic HbA1c SEs
+ggplot(df2[which(df2$StudyID %in% df2_cleaning$StudyID[which(df2_cleaning$HbA1c_SE>1)]),], aes(x = visit_duration, HbA1c, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic BMI SEs
+ggplot(df2[which(df2$StudyID %in% df2_cleaning$StudyID[which(df2_cleaning$BMI_SE>1.5)]),], aes(x = visit_duration, BMI, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+df2[which(df2$StudyID=="102281238H"),"BMI"][2] <- NA
+
+# plot of problematic SBP SEs
+ggplot(df2[which(df2$StudyID %in% df2_cleaning$StudyID[which(df2_cleaning$SBP_SE>6)]),], aes(x = visit_duration, SBP, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic DBP SEs
+ggplot(df2[which(df2$StudyID %in% df2_cleaning$StudyID[which(df2_cleaning$DBP_SE>5)]),], aes(x = visit_duration, DBP, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+```
+
+* I merge the follow-up data with the screening visit data to generate a final AdDIT data set:
+
+```{r echo = FALSE, message = FALSE}
+addit_final <- rbind(df, df2)
+
+actualcohorts <- read_excel("XX.xls")
+
+addit_final$cohort <- actualcohorts$`Actual Cohort`[match(addit_final$StudyID, actualcohorts$StudySampleID)]
+
+addit_final$age_at_diagnosis[which(is.na(addit_final$visit_duration))][1:7] <- 3.170431
+addit_final$visit_duration[which(is.na(addit_final$visit_duration))][1:7] <- addit_final$visit_age[which(is.na(addit_final$visit_duration))][1:7] - 3.170431
+
+addit_final$age_at_diagnosis[which(is.na(addit_final$visit_duration))][1:2] <- 6.7378507871321
+addit_final$visit_duration[which(is.na(addit_final$visit_duration))][1:2] <- addit_final$visit_age[which(is.na(addit_final$visit_duration))][1:2] - 6.7378507871321
+
+addit_final$age_at_diagnosis[which(is.na(addit_final$visit_duration))][1:3] <- 10.2614647501711
+addit_final$visit_duration[which(is.na(addit_final$visit_duration))][1:3] <- addit_final$visit_age[which(is.na(addit_final$visit_duration))][1:3] - 10.2614647501711
+```
+
+```{r}
+head(addit_final)
+
+saveRDS(addit_final, "AdDIT-data.RDS")
+```
+
+---
+
+### 2. NFS
+
+```{r echo = FALSE}
+# read in data 
+wb <- loadWorkbook("XX.xlsx")
+exceldata <- readWorksheet(wb, "ACRORPSNFS")
+rm(wb) # clean up
+
+# match actual cohort of samples
+actualcohorts <- read_excel("XX.xls")
+exceldata$cohort <- actualcohorts$`Actual Cohort`[match(exceldata$StudySampleID, actualcohorts$StudySampleID)]
+
+# HbA1c data
+wb <- loadWorkbook("XX.xlsx")
+hba1cdata <- readWorksheet(wb, "HbA1c")
+
+# match actual cohort of samples
+hba1cdata$cohort <- actualcohorts$`Actual Cohort`[match(hba1cdata$StudySampleID, actualcohorts$StudySampleID)]
+
+#class(exceldata$date.at.visit)
+
+NFS_exceldata <- exceldata[which(exceldata$cohort=="NFS"),]
+NFS_exceldata <- NFS_exceldata[!duplicated(NFS_exceldata),] # remove 721 duplicate rows
+```
+
+* 54 entries have 0 consecutive ACR readings (and  NAs for everything else), 28 entries have only one consecutive ACR reading taken at a visit, and 126 only have two consecutive ACR readings taken at a visit. Exclude those with 0 or 1 reading only.
+
+```{r echo = FALSE}
+# how many entries have 0 consecutive ACR readings? 54
+# but these are missing all data....
+#length(which(is.na(NFS_exceldata $ACR1) & is.na(NFS_exceldata $ACR2) & is.na(NFS_exceldata $ACR3)))
+
+# how many entries have 1 consecutive ACR readings? 29
+#length(which(is.na(NFS_exceldata $ACR2) & is.na(NFS_exceldata $ACR3) & !is.na(NFS_exceldata $ACR1)))
+
+# how many entries have 2 consecutive ACR readings? 127
+#length(which(!is.na(NFS_exceldata $ACR2) & is.na(NFS_exceldata $ACR3 & !is.na(NFS_exceldata $ACR1))))
+
+NFS_exceldata <- NFS_exceldata[-c(which(is.na(NFS_exceldata $ACR1) & is.na(NFS_exceldata $ACR2) & is.na(NFS_exceldata $ACR3)), which(is.na(NFS_exceldata $ACR2) & is.na(NFS_exceldata $ACR3) & !is.na(NFS_exceldata $ACR1))),]
+```
+
+* Explore the variability of the consecutive ACR readings and remove those with $SE>30$ (corresponding to 5 rows shown below).
+
+```{r echo = FALSE}
+ACR_se <- apply(NFS_exceldata, 1, function(x) sd(x[c(7:9)])/sqrt(3-length(which(is.na(x[c(7:9)])))))
+par(mfrow=c(1,1))
+hist(ACR_se, main = "Histogram of SE of 3 consecutive ACR\nreadings in NFS data", breaks = 100)
+
+data.frame(NFS_exceldata[which(ACR_se>30),c("StudySampleID","ACR1","ACR2","ACR3")], ACR_SE = ACR_se[which(ACR_se>30)])
+NFS_exceldata <- NFS_exceldata[-which(ACR_se>30),]
+```
+
+* Match up BMI, blood pressure and HbA1c measurements for each visit (within 7 days of the visit date). 
+
+* Construct the final data frame, setting `treatment.allocation` to 5 (corresponds to the control group in AdDIT).
+
+```{r echo = FALSE, message = FALSE, warning =  FALSE}
+NFS_exceldata$BMI <- apply(NFS_exceldata, 1, function(x){
+  
+  newdf <- NFSORPSotherdata[which(NFSORPSotherdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$BMI[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$visit.date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$visit.date))),]
+          
+          if(length(which(!is.na(out_ordered$BMI)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$BMI[min(which(!is.na(out_ordered$BMI)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+NFS_exceldata$SBP <- apply(NFS_exceldata, 1, function(x){
+  
+  newdf <- NFSORPSotherdata[which(NFSORPSotherdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$SBP[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$visit.date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$visit.date))),]
+          
+          if(length(which(!is.na(out_ordered$SBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$SBP[min(which(!is.na(out_ordered$SBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+
+NFS_exceldata$DBP <- apply(NFS_exceldata, 1, function(x){
+  
+  newdf <- NFSORPSotherdata[which(NFSORPSotherdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$DBP[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$visit.date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$visit.date))),]
+          
+          if(length(which(!is.na(out_ordered$DBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$DBP[min(which(!is.na(out_ordered$DBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+#NFS_exceldata[which(is.na(NFS_exceldata$BMI)),]
+#NFS_exceldata[which(is.na(NFS_exceldata$SBP)),]
+#NFS_exceldata[which(is.na(NFS_exceldata$SBP)),]
+
+df_NFS <- data.frame(StudyID = NFS_exceldata$StudySampleID, type = rep(NA, times = length(NFS_exceldata$StudySampleID)), sex = NFS_exceldata$SEX, meanACR = rowMeans(NFS_exceldata[,c("ACR1","ACR2","ACR3")], na.rm = TRUE), visit_age = NFS_exceldata$age.at.visit, visit_date = NFS_exceldata$date.at.visit, visit_duration = NFS_exceldata$duration.at.visit, HbA1c = rep(NA, times = length(NFS_exceldata$StudySampleID)), age_at_diagnosis = NFS_exceldata$age.at.diagnosis, treatment.allocation = rep(5, times = length(NFS_exceldata$StudySampleID)), cohort = rep("NFS", times = length(NFS_exceldata$StudySampleID)), BMI = NFS_exceldata$BMI, SBP = NFS_exceldata$SBP, DBP = NFS_exceldata$DBP)
+
+# make data.frame and use HbA1c reading from the same date
+# if HbA1c is not available for that specific date then use the closest one within 7 days
+df_NFS$HbA1c <- apply(NFS_exceldata, 1, function(x){
+  
+  newdf <- hba1cdata[which(hba1cdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$Hba1c[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$Date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$Date))))){
+      test <- NA} else{
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$Date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$Date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$Date))),]
+          
+          if(length(which(!is.na(out_ordered$Hba1c)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$Hba1c[min(which(!is.na(out_ordered$Hba1c)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+NFS_exceldata$type <- NA
+
+for(u in 1:length(unique(df_NFS$StudyID))){
+  ind <-  which(df_NFS$StudyID==unique(df_NFS$StudyID)[u])
+  nodatapoints <- length(ind)
+  ind <- ind[order(df_NFS$visit_duration[ind])]
+  df_NFS$type[ind] <- seq(1,nodatapoints,1)
+  NFS_exceldata$type[ind] <- seq(1,nodatapoints,1)
+}
+```
+
+I check for missing values and see if I can fill these in from the data.
+
+```{r echo = FALSE}
+df_NFS[which(is.na(df_NFS$StudyID)),]
+df_NFS[which(is.na(df_NFS$sex)),]
+df_NFS[which(is.na(df_NFS$visit_age)),]
+
+for(i in which(is.na(df_NFS$visit_age))){
+  
+  studyID <- df_NFS[i,"StudyID"]
+  type <- df_NFS[i,"type"]
+  df_NFS[i, "age_at_diagnosis"] <- df_NFS[which(df_NFS$StudyID==studyID)[1],"age_at_diagnosis"]
+  
+  visit_date <- NFS_exceldata[which(NFS_exceldata$StudySampleID==studyID & NFS_exceldata$type==type),"date.at.visit"]
+  diagnosis_date <- as.Date(NFS_exceldata[which(NFS_exceldata$StudySampleID==studyID)[1],"date.at.visit"]) - (df_NFS[which(df_NFS$StudyID==studyID)[1],"visit_duration"])*365
+    
+  df_NFS[i, "visit_duration"] <- (as.Date(visit_date) - as.Date(diagnosis_date))/365
+  df_NFS[i, "visit_age"] <- df_NFS[i,"visit_duration"] + df_NFS[i,"age_at_diagnosis"]
+  
+}
+
+#df_NFS[which(is.na(df_NFS$visit_date)),]
+#df_NFS[which(is.na(df_NFS$visit_duration)),]
+
+#df_NFS[which(is.na(df_NFS$HbA1c)),]
+#df_NFS[which(is.na(df_NFS$age_at_diagnosis)),]
+#df_NFS[which(is.na(df_NFS$treatment.allocation)),]
+#df_NFS[which(is.na(df_NFS$cohort)),]
+#df_NFS[which(is.na(df_NFS$BMI)),]
+#df_NFS[which(is.na(df_NFS$SBP)),]
+#df_NFS[which(is.na(df_NFS$DBP)),]
+```
+
+---
+
+* I explore histograms for each variable to try and identify any spurious values which I can then back calculate.
+
+```{r echo = FALSE, message = FALSE}
+par(mfrow=c(3,3))
+hist(df_NFS$age_at_diagnosis, breaks = 50, main = "Age at diabetes onset", xlab = "Age at diabetes onset")
+hist(df_NFS$visit_age, main = "Age at visit", xlab = "Age at visit")
+hist(df_NFS$visit_duration, main = "Duration at visit", xlab = "Duration of diabetes at visit (years)")
+hist(df_NFS$HbA1c, main = "HbA1c", xlab = "HbA1c (%)")
+hist(df_NFS$BMI, main = "BMI", xlab = "BMI")
+hist(df_NFS$SBP, main = "SBP", xlab = "SBP")
+hist(df_NFS$DBP, main = "DBP", xlab = "DBP")
+
+#table(df2$sex)
+```
+
+* Sample 101394023T has incorrect entries that I am unable to correct, and so I remove this sample. 
+
+* The histograms now look better.
+
+```{r echo = FALSE}
+df_NFS <- df_NFS[-which(df_NFS$StudyID=="101394023T"),]
+
+par(mfrow=c(3,3))
+hist(df_NFS$age_at_diagnosis, breaks = 50, main = "Age at diabetes onset", xlab = "Age at diabetes onset")
+hist(df_NFS$visit_age, main = "Age at visit", xlab = "Age at visit")
+hist(df_NFS$visit_duration, main = "Duration at visit", xlab = "Duration of diabetes at visit (years)")
+hist(df_NFS$HbA1c, main = "HbA1c", xlab = "HbA1c (%)")
+hist(df_NFS$BMI, main = "BMI", xlab = "BMI")
+hist(df_NFS$SBP, main = "SBP", xlab = "SBP")
+hist(df_NFS$DBP, main = "DBP", xlab = "DBP")
+```
+
+---
+
+I check for intra-individual variability in HbA1c, BMI, SBP and DBP.
+
+```{r echo = FALSE}
+par(mfrow=c(2,2))
+df_NFS_cleaning <- df_NFS %>% group_by(StudyID) %>% summarise(HbA1c_SE = sd(HbA1c)/sqrt(n()), BMI_SE = sd(BMI)/sqrt(n()), SBP_SE = sd(SBP)/sqrt(n()), DBP_SE = sd(DBP)/sqrt(n()))
+
+hist(df_NFS_cleaning$HbA1c_SE, main = "SE of HbA1c per individual")
+hist(df_NFS_cleaning$BMI_SE, main = "SE of BMI per individual")
+hist(df_NFS_cleaning$SBP_SE, main = "SE of SBP per individual")
+hist(df_NFS_cleaning$DBP_SE, main = "SE of DBP per individual")
+
+# plot of problematic HbA1c SEs
+ggplot(df_NFS[which(df_NFS$StudyID %in% df_NFS_cleaning$StudyID[which(df_NFS_cleaning$HbA1c_SE>1)]),], aes(x = visit_duration, HbA1c, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic BMI SEs
+ggplot(df_NFS[which(df_NFS$StudyID %in% df_NFS_cleaning$StudyID[which(df_NFS_cleaning$BMI_SE>1)]),], aes(x = visit_duration, BMI, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic SBP SEs
+ggplot(df_NFS[which(df_NFS$StudyID %in% df_NFS_cleaning$StudyID[which(df_NFS_cleaning$SBP_SE>10)]),], aes(x = visit_duration, SBP, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic DBP SEs
+ggplot(df_NFS[which(df_NFS$StudyID %in% df_NFS_cleaning$StudyID[which(df_NFS_cleaning$DBP_SE>8)]),], aes(x = visit_duration, DBP, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+  
+saveRDS(df_NFS, "NFS-data.RDS")
+
+# out_tmp <- df_NFS %>% group_by(StudyID) %>% summarise(max(visit_duration))
+# median(out_tmp$`max(visit_duration)`)
+# range(out_tmp$`max(visit_duration)`)
+```
+
+---
+
+#### ORPS
+
+* 113 entries have only one consecutive ACR reading taken at a visit, and 431 only have two. I exclude those with only one measurement.
+
+```{r echo = FALSE}
+ORPS_exceldata <- exceldata[which(exceldata$cohort=="ORPS"),]
+
+# how many individuals have 0 consecutive ACR readings? 0
+#length(which(is.na(ORPS_exceldata $ACR1) & is.na(ORPS_exceldata $ACR2) & is.na(ORPS_exceldata $ACR3)))
+
+# how many individuals have 1 consecutive ACR readings? 113
+#length(which(is.na(ORPS_exceldata $ACR2) & is.na(ORPS_exceldata $ACR3) & !is.na(ORPS_exceldata $ACR1)))
+
+# how many individuals have 2 consecutive ACR readings? 431
+#length(which(!is.na(ORPS_exceldata $ACR2) & is.na(ORPS_exceldata $ACR3 & !is.na(ORPS_exceldata $ACR1))))
+
+ORPS_exceldata <- ORPS_exceldata[-which(is.na(ORPS_exceldata $ACR2) & is.na(ORPS_exceldata $ACR3) & !is.na(ORPS_exceldata $ACR1)),]
+```
+
+* I explore the variability of the remaining consecutive ACR readings and remove those with $ACR>30$ (corresponding to 5 rows shown below).
+
+```{r echo = FALSE}
+ACR_se <- apply(ORPS_exceldata, 1, function(x) sd(x[c(7:9)])/sqrt(3-length(which(is.na(x[c(7:9)])))))
+par(mfrow=c(1,1))
+hist(ACR_se, main = "Histogram of SE of 3 consecutive ACR\nreadings in ORPS data", breaks = 100)
+
+data.frame(ORPS_exceldata[which(ACR_se>30),c("StudySampleID","ACR1","ACR2","ACR3")], ACR_SE = ACR_se[which(ACR_se>30)])
+
+ORPS_exceldata <- ORPS_exceldata[-which(ACR_se>30),]
+```
+
+* I match up BMI, blood pressure and HbA1c measurements for each visit (or the closest measurement taken within 7 days of the visit date). Missingness is high.
+
+* I then construct the final data frame, setting treatment.allocation to 5 (the control group in AdDIT).
+
+```{r echo = FALSE, message = FALSE, warning =  FALSE}
+ORPS_exceldata$BMI <- apply(ORPS_exceldata, 1, function(x){
+  
+  newdf <- NFSORPSotherdata[which(NFSORPSotherdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$BMI[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$visit.date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$visit.date))),]
+          
+          if(length(which(!is.na(out_ordered$BMI)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$BMI[min(which(!is.na(out_ordered$BMI)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+ORPS_exceldata$SBP <- apply(ORPS_exceldata, 1, function(x){
+  
+  newdf <- NFSORPSotherdata[which(NFSORPSotherdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$SBP[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$visit.date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$visit.date))),]
+          
+          if(length(which(!is.na(out_ordered$SBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$SBP[min(which(!is.na(out_ordered$SBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+ORPS_exceldata$DBP <- apply(ORPS_exceldata, 1, function(x){
+  
+  newdf <- NFSORPSotherdata[which(NFSORPSotherdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$DBP[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$visit.date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))))){
+      
+      test <- NA} else{
+        
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$visit.date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$visit.date))),]
+          
+          if(length(which(!is.na(out_ordered$DBP)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$DBP[min(which(!is.na(out_ordered$DBP)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+#ORPS_exceldata[which(is.na(ORPS_exceldata$BMI)),]
+#ORPS_exceldata[which(is.na(ORPS_exceldata$SBP)),]
+#ORPS_exceldata[which(is.na(ORPS_exceldata$SBP)),]
+
+# make data.frame and use HbA1c reading from the same date
+# if HbA1c is not available for that specific date then use the closest one within 7 days
+ORPS_exceldata$HbA1c <- apply(ORPS_exceldata, 1, function(x){
+  
+  newdf <- hba1cdata[which(hba1cdata$StudySampleID==x[["StudySampleID"]]),]
+  
+  test <- newdf$Hba1c[match(as.Date(x[["date.at.visit"]]),as.Date(newdf$Date))]
+  
+  # try closest date (within 1 year) with HbA1C measurement
+  if(is.na(test)){
+    if(is.na(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$Date))))){
+      test <- NA} else{
+        if(min(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$Date)))<8){
+          
+          out <- newdf[which(abs(as.Date(x[["date.at.visit"]])-as.Date(newdf$Date))<8),]
+          out_ordered <- out[order(abs(as.Date(x[["date.at.visit"]])-as.Date(out$Date))),]
+          
+          if(length(which(!is.na(out_ordered$Hba1c)))==0){
+            test <- NA
+          } else{
+             test <- out_ordered$Hba1c[min(which(!is.na(out_ordered$Hba1c)))]
+          }
+          
+        }
+    }
+  }
+
+  test
+})
+
+df_ORPS <- data.frame(StudyID = ORPS_exceldata$StudySampleID, type = rep(NA, times = length(ORPS_exceldata$StudySampleID)), sex = ORPS_exceldata$SEX, meanACR = rowMeans(ORPS_exceldata[,c("ACR1","ACR2","ACR3")], na.rm = TRUE), visit_age = ORPS_exceldata$age.at.visit, visit_date = ORPS_exceldata$date.at.visit, visit_duration = ORPS_exceldata$duration.at.visit, HbA1c = ORPS_exceldata$HbA1c, age_at_diagnosis = ORPS_exceldata$age.at.diagnosis, treatment.allocation = rep(5, times = length(ORPS_exceldata$StudySampleID)), cohort = rep("ORPS", times = length(ORPS_exceldata$StudySampleID)), BMI = ORPS_exceldata$BMI, SBP = ORPS_exceldata$SBP, DBP = ORPS_exceldata$DBP)
+
+df_ORPS$type <- NA
+
+for(u in 1:length(unique(df_ORPS$StudyID))){
+  ind <-  which(df_ORPS$StudyID==unique(df_ORPS$StudyID)[u])
+  nodatapoints <- length(ind)
+  ind <- ind[order(df_ORPS$visit_duration[ind])]
+  df_ORPS$type[ind] <- seq(1,nodatapoints,1)
+  ORPS_exceldata$type[ind] <- seq(1,nodatapoints,1)
+}
+```
+
+* I check for missing values and see if I can fill these in from the data.
+
+```{r echo = FALSE}
+df_ORPS[which(is.na(df_ORPS$StudyID)),]
+df_ORPS[which(is.na(df_ORPS$sex)),]
+df_ORPS[which(is.na(df_ORPS$visit_age)),]
+
+for(i in which(is.na(df_ORPS$visit_age))){
+  
+  studyID <- df_ORPS[i,"StudyID"]
+  type <- df_ORPS[i,"type"]
+  df_ORPS[i, "age_at_diagnosis"] <- df_ORPS[which(df_ORPS$StudyID==studyID)[1],"age_at_diagnosis"]
+  
+  visit_date <- ORPS_exceldata[which(ORPS_exceldata$StudySampleID==studyID & ORPS_exceldata$type==type),"date.at.visit"]
+  diagnosis_date <- as.Date(ORPS_exceldata[which(ORPS_exceldata$StudySampleID==studyID)[1],"date.at.visit"]) - (df_ORPS[which(df_ORPS$StudyID==studyID)[1],"visit_duration"])*365
+    
+  df_ORPS[i, "visit_duration"] <- (as.Date(visit_date) - as.Date(diagnosis_date))/365
+  df_ORPS[i, "visit_age"] <- df_ORPS[i,"visit_duration"] + df_ORPS[i,"age_at_diagnosis"]
+  
+}
+
+df_ORPS[which(is.na(df_ORPS$visit_duration)),]
+df_ORPS[which(is.na(df_ORPS$age_at_diagnosis)),]
+
+#df_ORPS[which(is.na(df_ORPS$visit_date)),]
+#df_ORPS[which(is.na(df_ORPS$visit_duration)),]
+
+#df_ORPS[which(is.na(df_ORPS$HbA1c)),]
+#df_ORPS[which(is.na(df_ORPS$age_at_diagnosis)),]
+#df_ORPS[which(is.na(df_ORPS$treatment.allocation)),]
+#df_ORPS[which(is.na(df_ORPS$cohort)),]
+#df_ORPS[which(is.na(df_ORPS$BMI)),]
+#df_ORPS[which(is.na(df_ORPS$SBP)),]
+#df_ORPS[which(is.na(df_ORPS$DBP)),]
+```
+
+---
+
+* I explore histograms for each variable to try and identify any spurious values which I can then back calculate.
+
+```{r echo = FALSE, message = FALSE}
+par(mfrow=c(3,3))
+hist(df_ORPS$age_at_diagnosis, breaks = 50, main = "Age at diabetes onset", xlab = "Age at diabetes onset")
+hist(df_ORPS$visit_age, main = "Age at visit", xlab = "Age at visit")
+hist(df_ORPS$visit_duration, main = "Duration at visit", xlab = "Duration of diabetes at visit (years)")
+hist(df_ORPS$HbA1c, main = "HbA1c", xlab = "HbA1c (%)")
+hist(df_ORPS$BMI, main = "BMI", xlab = "BMI")
+hist(df_ORPS$SBP, main = "SBP", xlab = "SBP")
+hist(df_ORPS$DBP, main = "DBP", xlab = "DBP")
+
+#table(df2$sex)
+```
+
+---
+
+I check for intra-individual variability in HbA1c, BMI, SBP and DBP. 
+
+```{r echo = FALSE}
+par(mfrow=c(2,2))
+df_ORPS_cleaning <- df_ORPS %>% group_by(StudyID) %>% summarise(HbA1c_SE = sd(HbA1c)/sqrt(n()), BMI_SE = sd(BMI)/sqrt(n()), SBP_SE = sd(SBP)/sqrt(n()), DBP_SE = sd(DBP)/sqrt(n()))
+
+hist(df_ORPS_cleaning$HbA1c_SE, main = "SE of HbA1c per individual")
+hist(df_ORPS_cleaning$BMI_SE, main = "SE of BMI per individual")
+hist(df_ORPS_cleaning$SBP_SE, main = "SE of SBP per individual")
+hist(df_ORPS_cleaning$DBP_SE, main = "SE of DBP per individual")
+
+# plot of problematic HbA1c SEs
+ggplot(df_ORPS[which(df_ORPS$StudyID %in% df_ORPS_cleaning$StudyID[which(df_ORPS_cleaning$HbA1c_SE>1)]),], aes(x = visit_duration, HbA1c, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic BMI SEs
+ggplot(df_ORPS[which(df_ORPS$StudyID %in% df_ORPS_cleaning$StudyID[which(df_ORPS_cleaning$BMI_SE>2)]),], aes(x = visit_duration, BMI, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic SBP SEs
+ggplot(df_ORPS[which(df_ORPS$StudyID %in% df_ORPS_cleaning$StudyID[which(df_ORPS_cleaning$SBP_SE>10)]),], aes(x = visit_duration, SBP, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+# plot of problematic DBP SEs
+ggplot(df_ORPS[which(df_ORPS$StudyID %in% df_ORPS_cleaning$StudyID[which(df_ORPS_cleaning$DBP_SE>8)]),], aes(x = visit_duration, DBP, group = StudyID)) +
+  geom_point(size = 1, col = "black") +
+  facet_wrap('StudyID') +
+  theme(panel.grid = element_blank()) + theme_light()
+
+#df_ORPS <- df_ORPS[-which(df_ORPS$StudyID %in% df_ORPS_cleaning$StudyID[which(df_ORPS_cleaning$BMI_SE>4)]),]
+```
+
+```{r echo = FALSE}
+saveRDS(df_ORPS, "ORPS-data.RDS")
+
+# out_tmp <- df_ORPS %>% group_by(StudyID) %>% summarise(max(visit_duration))
+# median(out_tmp$`max(visit_duration)`)
+# range(out_tmp$`max(visit_duration)`)
+```
+
+```{r echo = FALSE}
+ORPS <- readRDS("ORPS-data.RDS")
+NFS <- readRDS("NFS-data.RDS")
+AdDIT <- readRDS("AdDIT-data.RDS")
+
+full_df <- rbind(ORPS,NFS,AdDIT)
+saveRDS(full_df, "final_df.RDS")
+```

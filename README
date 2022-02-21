@@ -1,0 +1,27 @@
+This directory contains the source code for the analysis described in Hutchinson et al. 2022
+
+# 1-GenotypeQCImp
+
+	* QC and imputation was performed within genotyping groups (groups 1, 2 and 3)
+	* Due to privacy issues we are unable to provide raw genotyping data
+
+# 2-PhenotypeDataPrep
+
+	* a-CleanData/data-prep.Rmd is used to clean the raw phenotype data
+	* b-MultipleImputations/impute-data.Rmd is used to impute multiple data sets
+	* c-MakePhenotypes/Trajectory-pheno/get-phenotypes.R is used to derive the trajectory phenotype values for each imputed data set (run as an array job; 1-5 for the imputed data sets)
+	* c-MakePhenotypes/Secondary-phenotypes/get-secondary-phenotypes.R is used to derive the average ACR and latest ACR phenotype values for each imputed data set 
+
+# 3-GWAS
+
+	* Three directories for the three phenotypes, which all have the same structure:
+		* Use make-files.R to make the plink files for each of the imputations
+		* Run run-GWAS.sh to perform the GWAS, for which the output files are stored in output/ (requires the Gemma software)
+		* To pool results across imputations, we use Rubin’s rules. See output/pool-results.R
+
+# 4-Fine-mapping
+
+	* LDdata/ can be downloaded from 1000 Genomes project
+	* Use script_*.R to perform fine-mapping using SuSie
+	* Use plots/script.R to perform fine-mapping using the standard Bayesian approach and to make the plots.
+

@@ -1,0 +1,198 @@
+---
+title: "Impute data"
+author: "Anna Hutchinson"
+output: html_document
+---
+
+---
+
+This document describes the imputation procedure.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("mice")
+library(ggforce)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+source("fig_source.R")
+```
+
+Firstly, read in the data and convert quantitative variables to numeric.
+
+```{r}
+final_df <- readRDS("../a-CleanData/final_df.RDS")
+
+# make quantitative variables numeric
+final_df$sex <- as.numeric(as.factor(final_df$sex))
+final_df$cohort <- as.numeric(as.factor(final_df$cohort))
+final_df$treatment.allocation <- as.numeric(as.factor(final_df$treatment.allocation))
+```
+
+The data frame contains collinear variables: visit date, age at diagnosis, age at visit and duration of diabetes at visit. I remove visit date and age at diagnosis.
+
+```{r}
+final_df <- final_df[,-c(2,6,9)]
+```
+
+The missing data pattern is shown below. The most common missingness is for HbA1c, BMI, SBP and DBP together. The next most common is for SBP, DBP and BMI together. All other missingness patterns are relatively rare. 
+
+```{r fig.width = 6, fig.height = 7}
+md.pattern(final_df, rotate.names = TRUE)
+```
+
+I wouldn't expect the missingness of variables to depend on the values of other variables (e.g. those with missing HbA1c would have higher ACR or anything like that).
+
+I use the `quickpred` function in the `mice` R package to help form the prediction matrix. Briefly, for a variable (column) to be predictive of another variable (rows), the correlation must be $>0.1$ and must have at least a quarter of entries not NA. Since our data has multiple levels, the StudyID variable will be used in the prediction of all other variables. (All values of 1 must also be set to 2 since we are considering a multilevel model.)
+
+```{r}
+pred <- quickpred(final_df, mincor = 0.1, minpuc = 0.25) # random intercept is automatically added
+
+# but since we're considering multilevel model we need -2 for the class variable (StudyID) and 2 (random effect) instead of 1 (fixed effect)
+pred[,"StudyID"] <- -2
+pred[pred==1] <- 2
+```
+
+I specify that I want to impute HbA1c, BMI, SBP and DBP.
+
+```{r}
+# determines which variables to impute (and with which method)
+meth <- c("","","","","","2l.norm", "", "", "2l.norm","2l.norm","2l.norm")
+```
+
+For now, I use the default `m=5` (number of imputations). I use `maxit=10` (number of iterations for each imputation).
+
+```{r eval = FALSE}
+imp <- mice(final_df, meth = meth, pred = pred, maxit = 10)
+saveRDS("multipleimpres.RDS")
+```
+
+```{r echo = FALSE}
+imp <- readRDS("multipleimpres.RDS")
+```
+
+The chains look well mixed across iterations (implying that `maxit=10` is sufficient).
+
+```{r}
+plot(imp)
+```
+
+The imputed HbA1c measurements tend to be slightly bigger than those observed and there are also some extreme values. The `mice::squeeze` function can be used to replace any values more extreme than the boundaries by the value at the boundary. 
+
+```{r}
+densityplot(imp, ~HbA1c) 
+imp$imp$HbA1c <- squeeze(imp$imp$HbA1c, bounds = c(min(na.omit(final_df$HbA1c)), max(na.omit(final_df$HbA1c))))
+densityplot(imp, ~HbA1c) 
+```
+
+I do the same for imputed values for BMI and blood pressure that lie outside the range of observed data points. 
+
+```{r}
+densityplot(imp, ~BMI) 
+imp$imp$BMI <- squeeze(imp$imp$BMI, bounds = c(min(na.omit(final_df$BMI)), max(na.omit(final_df$BMI))))
+densityplot(imp, ~BMI) 
+
+densityplot(imp, ~SBP) 
+imp$imp$SBP <- squeeze(imp$imp$SBP, bounds = c(min(na.omit(final_df$SBP)), max(na.omit(final_df$SBP))))
+densityplot(imp, ~SBP) 
+
+densityplot(imp, ~DBP) 
+imp$imp$DBP <- squeeze(imp$imp$DBP, bounds = c(min(na.omit(final_df$DBP)), max(na.omit(final_df$DBP))))
+densityplot(imp, ~DBP)
+```
+
+
+---
+
+We can visualise the imputations to check that they are sensible:
+
+```{r eval = FALSE}
+imputed1 <- complete(imp, 1)
+imputed2 <- complete(imp, 2)
+imputed3 <- complete(imp, 3)
+imputed4 <- complete(imp, 4)
+imputed5 <- complete(imp, 5)
+
+colnames(imputed1) <- paste0(colnames(imputed1),".imp1")
+colnames(imputed2) <- paste0(colnames(imputed2),".imp2")
+colnames(imputed3) <- paste0(colnames(imputed3),".imp3")
+colnames(imputed4) <- paste0(colnames(imputed4),".imp4")
+colnames(imputed5) <- paste0(colnames(imputed5),".imp5")
+
+plotDF <- cbind(final_df, imputed1, imputed2, imputed3, imputed4, imputed5)
+
+# make a subset of 24 randomly chosen subjects
+plotDF_sub <- subset(plotDF, StudyID %in% sample(unique(full_df$StudyID), size = 30))
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = HbA1c, group = StudyID)) +
+  geom_line(aes(y = HbA1c.imp1), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = HbA1c.imp1), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = HbA1c, group = StudyID)) +
+  geom_line(aes(y = HbA1c.imp2), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = HbA1c.imp2), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = HbA1c, group = StudyID)) +
+  geom_line(aes(y = HbA1c.imp3), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = HbA1c.imp3), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = HbA1c, group = StudyID)) +
+  geom_line(aes(y = HbA1c.imp4), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = HbA1c.imp4), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = HbA1c, group = StudyID)) +
+  geom_line(aes(y = HbA1c.imp5), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = HbA1c.imp5), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+#####################
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = BMI, group = StudyID)) +
+  geom_line(aes(y = BMI.imp1), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = BMI.imp1), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = BMI, group = StudyID)) +
+  geom_line(aes(y = BMI.imp2), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = BMI.imp2), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = BMI, group = StudyID)) +
+  geom_line(aes(y = BMI.imp3), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = BMI.imp3), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = BMI, group = StudyID)) +
+  geom_line(aes(y = BMI.imp4), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = BMI.imp4), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+
+ggplot(plotDF_sub, aes(x = visit_duration, y = BMI, group = StudyID)) +
+  geom_line(aes(y = BMI.imp5), color = 'orange', alpha = 0.3, size = 0.8) +
+  geom_point(aes(y = BMI.imp5), color = 'orange', alpha = 0.3, size = 1) +
+  geom_point(size = 1, col = "black") + 
+  facet_wrap('StudyID', ncol = 6) +
+  theme(panel.grid = element_blank()) + theme_light()
+```
